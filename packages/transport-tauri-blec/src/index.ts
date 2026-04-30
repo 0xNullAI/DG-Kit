@@ -9,6 +9,7 @@ export { PluginBlecCharacteristic } from './characteristic.js';
 export { createGattShim } from './gatt-shim.js';
 export {
   TauriBlecDeviceClient,
+  type DeviceSelectionController,
   type DiscoveredDevice,
   type TauriBlecDeviceClientOptions,
 } from './client.js';

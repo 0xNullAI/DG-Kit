@@ -87,7 +87,17 @@ describe('TauriBlecDeviceClient.connect', () => {
 
     const protocol = new FakeProtocol();
     const selectDevice = vi.fn().mockImplementation(
-      async (devices: DiscoveredDevice[]) => {
+      async (controller: { initial: DiscoveredDevice[]; subscribe: (h: (d: DiscoveredDevice[]) => void) => () => void }) => {
+        // wait for the scan handler to push at least one device
+        const devices = await new Promise<DiscoveredDevice[]>((resolve) => {
+          if (controller.initial.length) return resolve(controller.initial);
+          const off = controller.subscribe((next) => {
+            if (next.length) {
+              off();
+              resolve(next);
+            }
+          });
+        });
         expect(devices).toHaveLength(1);
         expect(devices[0]?.name).toBe('47L1210000XX');
         return devices[0]!.address;
@@ -135,7 +145,7 @@ describe('TauriBlecDeviceClient.connect', () => {
     const protocol = new FakeProtocol();
     const client = new TauriBlecDeviceClient({
       protocol: protocol as never,
-      selectDevice: vi.fn().mockResolvedValue(null),
+      selectDevice: vi.fn().mockResolvedValue(null) as never,
       scanDurationMs: 50,
     });
     await expect(client.connect()).rejects.toThrow(/取消/);
@@ -164,7 +174,16 @@ describe('TauriBlecDeviceClient.connect', () => {
     let captured: DiscoveredDevice[] = [];
     const client = new TauriBlecDeviceClient({
       protocol: protocol as never,
-      selectDevice: async (devices) => {
+      selectDevice: async (controller) => {
+        const devices = await new Promise<DiscoveredDevice[]>((resolve) => {
+          if (controller.initial.length) return resolve(controller.initial);
+          const off = controller.subscribe((next) => {
+            if (next.length) {
+              off();
+              resolve(next);
+            }
+          });
+        });
         captured = devices;
         return null;
       },
@@ -191,7 +210,18 @@ describe('TauriBlecDeviceClient.connect', () => {
     const protocol = new FakeProtocol();
     const client = new TauriBlecDeviceClient({
       protocol: protocol as never,
-      selectDevice: async (d) => d[0]!.address,
+      selectDevice: async (controller) => {
+        const devices = await new Promise<DiscoveredDevice[]>((resolve) => {
+          if (controller.initial.length) return resolve(controller.initial);
+          const off = controller.subscribe((next) => {
+            if (next.length) {
+              off();
+              resolve(next);
+            }
+          });
+        });
+        return devices[0]!.address;
+      },
       scanDurationMs: 50,
     });
     await client.connect();

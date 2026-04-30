@@ -16,14 +16,28 @@ export interface DiscoveredDevice {
   services: string[];
 }
 
+/**
+ * Live controller passed to `selectDevice`. The picker UI subscribes for
+ * incremental device updates while the scan is still in progress.
+ */
+export interface DeviceSelectionController {
+  /** Snapshot of devices already discovered when the picker opens. */
+  initial: DiscoveredDevice[];
+  /**
+   * Receive each subsequent batch of discovered devices. Returns an
+   * unsubscribe function the picker should call before resolving.
+   */
+  subscribe(handler: (devices: DiscoveredDevice[]) => void): () => void;
+}
+
 export interface TauriBlecDeviceClientOptions {
   protocol: WebBluetoothProtocolAdapter;
   /**
-   * Invoked once after the scan completes (or immediately on each update — see
-   * `liveUpdates`). The host UI shows the device list and resolves with the
-   * chosen address, or `null` if the user cancels.
+   * Called immediately after scan starts. The host UI opens the device picker
+   * and subscribes to live updates via the controller. Resolves with the
+   * chosen device address, or `null` if the user cancels.
    */
-  selectDevice: (devices: DiscoveredDevice[]) => Promise<string | null>;
+  selectDevice: (controller: DeviceSelectionController) => Promise<string | null>;
   /**
    * Optional client-side filter applied to scan results before they reach
    * `selectDevice`. Coyote V2 names start with `D-LAB ESTIM01`; V3 with `47L121`.
@@ -56,37 +70,51 @@ export class TauriBlecDeviceClient implements DeviceClient {
     const seen = new Map<string, BleDeviceInfo>();
     const scanDuration = this.options.scanDurationMs ?? 8000;
     const prefixes = this.options.namePrefixes;
+    const updateListeners = new Set<(devices: DiscoveredDevice[]) => void>();
 
-    await new Promise<void>((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      api
-        .startScan((devices) => {
-          for (const d of devices) {
-            if (prefixes && !prefixes.some((p) => d.name.startsWith(p))) continue;
-            seen.set(d.address, d);
-          }
-        }, scanDuration)
-        .then(() => {
-          timer = setTimeout(() => resolve(), scanDuration + 200);
-        })
-        .catch(reject);
-      // Safety: also resolve after scanDuration even if promise above hangs.
-      setTimeout(() => {
-        if (timer === null) resolve();
-      }, scanDuration + 1000);
-    });
+    const toDiscovered = (): DiscoveredDevice[] =>
+      [...seen.values()].map((d) => ({
+        address: d.address,
+        name: d.name,
+        rssi: d.rssi,
+        isConnected: d.isConnected,
+        services: d.services,
+      }));
 
-    await api.stopScan().catch(() => undefined);
+    // Kick off the scan; handler appends devices and notifies listeners.
+    const scanPromise = api.startScan((devices) => {
+      let changed = false;
+      for (const d of devices) {
+        if (prefixes && !prefixes.some((p) => d.name.startsWith(p))) continue;
+        const prev = seen.get(d.address);
+        if (!prev || prev.rssi !== d.rssi) changed = true;
+        seen.set(d.address, d);
+      }
+      if (changed) {
+        const snapshot = toDiscovered();
+        for (const fn of updateListeners) fn(snapshot);
+      }
+    }, scanDuration);
 
-    const discovered: DiscoveredDevice[] = [...seen.values()].map((d) => ({
-      address: d.address,
-      name: d.name,
-      rssi: d.rssi,
-      isConnected: d.isConnected,
-      services: d.services,
-    }));
+    let address: string | null;
+    try {
+      address = await this.options.selectDevice({
+        get initial() {
+          return toDiscovered();
+        },
+        subscribe(handler) {
+          updateListeners.add(handler);
+          return () => {
+            updateListeners.delete(handler);
+          };
+        },
+      });
+    } finally {
+      // Always stop the scan once the user has chosen / cancelled.
+      await scanPromise.catch(() => undefined);
+      await api.stopScan().catch(() => undefined);
+    }
 
-    const address = await this.options.selectDevice(discovered);
     if (!address) {
       throw new Error('用户取消了设备选择');
     }
