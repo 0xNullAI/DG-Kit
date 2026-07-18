@@ -146,3 +146,27 @@ export interface Logger {
   warn(message: string, meta?: Record<string, unknown>): void;
   error(message: string, meta?: Record<string, unknown>): void;
 }
+
+// ---------------------------------------------------------------------------
+// Multi-device kind support
+// ---------------------------------------------------------------------------
+
+/** Every DG-Lab BLE device family this runtime knows how to talk to. */
+export type DeviceKind = 'coyote' | 'paw-prints' | 'civet-edging' | 'opossum';
+
+/**
+ * Sensor devices (paw-prints, civet-edging) push event/telemetry streams
+ * rather than exposing a two-channel strength+waveform state. They get a
+ * narrower contract instead of being forced into the stim-shaped
+ * `DeviceState`/`DeviceCommand` types, which stay Coyote-only.
+ */
+export interface SensorState {
+  connected: boolean;
+  deviceName?: string;
+  address?: string;
+  battery?: number;
+}
+
+export function createEmptySensorState(): SensorState {
+  return { connected: false, battery: 0 };
+}

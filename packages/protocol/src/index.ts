@@ -12,6 +12,7 @@ export {
   type WebBluetoothAvailability,
   type WebBluetoothConnectionContext,
   type WebBluetoothProtocolAdapter,
+  type WebBluetoothSensorAdapter,
 } from './base.js';
 export { CoyoteV2ProtocolAdapter } from './v2.js';
 export { CoyoteV3ProtocolAdapter } from './v3.js';
