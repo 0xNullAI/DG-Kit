@@ -71,13 +71,26 @@ export class CoyoteV3ProtocolAdapter extends BaseCoyoteProtocolAdapter {
    * writes until it has seen the same connect-time sequence the app always
    * sends: an init packet on the write characteristic, best-effort
    * subscription to two legacy/OTA notify channels, and an MTU bump to 140.
-   * The legacy/OTA channels and MTU negotiation are optional — older
-   * firmware and Web Bluetooth (which has no MTU control API) simply don't
-   * have them, so those steps are non-fatal.
+   *
+   * The official app sends this exact same init packet unconditionally to
+   * every 47L12x-family device it connects to, old and new firmware alike —
+   * it has no firmware-version detection gating it — so this write should be
+   * harmless on older firmware (a GATT write generally succeeds regardless
+   * of whether the receiving firmware's application layer recognizes the
+   * opcode; it just gets ignored if not). Every step here is still
+   * best-effort/non-fatal, including the init write itself: if any step
+   * fails on some real device we haven't tested against, the rest of
+   * onConnected() falls back to the pre-handshake behavior (write BF/B0
+   * directly) rather than refusing to connect at all.
    */
   private async performConnectHandshake(context: WebBluetoothConnectionContext): Promise<void> {
     if (!this.writeChar) return;
-    await this.writeCharacteristicValue(this.writeChar, V3_INIT_PACKET);
+
+    try {
+      await this.writeCharacteristicValue(this.writeChar, V3_INIT_PACKET);
+    } catch {
+      // Best-effort — see class comment above. Fall through to BF/B0 as before.
+    }
 
     try {
       const legacyService = await context.server.getPrimaryService(V3_LEGACY_SERVICE);

@@ -410,6 +410,53 @@ describe('CoyoteV3ProtocolAdapter connect handshake', () => {
     await protocol.onDisconnected();
   });
 
+  it('still connects and writes BF/B0 normally if the init packet write itself is rejected', async () => {
+    // Guards backward compatibility with firmware that, for whatever reason,
+    // doesn't accept the init write — the connection must not be treated as
+    // failed just because this best-effort step didn't go through.
+    const writes: number[][] = [];
+    let writeCount = 0;
+    const writeChar = new MockCharacteristic(async (value) => {
+      writeCount += 1;
+      if (writeCount === 1) {
+        throw new Error('unsupported by this firmware');
+      }
+      writes.push(Array.from(value));
+    });
+    const notifyChar = new MockCharacteristic(async () => undefined);
+
+    const protocol = new CoyoteV3ProtocolAdapter();
+
+    await protocol.onConnected({
+      device: { name: '47L121000', id: 'old-firmware-device' } as unknown as EventTarget & {
+        id?: string;
+        name?: string;
+      },
+      server: {
+        connected: true,
+        async getPrimaryService(service: string) {
+          if (service !== V3_PRIMARY_SERVICE) {
+            throw new Error(`service unavailable: ${service}`);
+          }
+          return {
+            async getCharacteristic(characteristic: string) {
+              if (characteristic === V3_WRITE_CHAR) return writeChar;
+              if (characteristic === V3_NOTIFY_CHAR) return notifyChar;
+              throw new Error(`unknown characteristic: ${characteristic}`);
+            },
+          };
+        },
+      },
+    });
+
+    expect(protocol.getState().connected).toBe(true);
+    // The rejected init write doesn't produce a recorded write, but the
+    // subsequent BF write still goes through.
+    expect(writes[0]?.[0]).toBe(0xbf);
+
+    await protocol.onDisconnected();
+  });
+
   it('requests the handshake MTU when the transport supports it', async () => {
     const writeChar = new MockCharacteristic(async () => undefined);
     const notifyChar = new MockCharacteristic(async () => undefined);
