@@ -2,6 +2,12 @@ import type { Channel } from '@dg-kit/core';
 import {
   V3_BATTERY_CHAR,
   V3_BATTERY_SERVICE,
+  V3_HANDSHAKE_MTU,
+  V3_INIT_PACKET,
+  V3_LEGACY_NOTIFY_CHAR,
+  V3_LEGACY_SERVICE,
+  V3_NORDIC_OTA_CHAR,
+  V3_NORDIC_OTA_SERVICE,
   V3_NOTIFY_CHAR,
   V3_PRIMARY_SERVICE,
   V3_WRITE_CHAR,
@@ -35,6 +41,8 @@ export class CoyoteV3ProtocolAdapter extends BaseCoyoteProtocolAdapter {
       await this.notifyChar.startNotifications();
       this.notifyChar.addEventListener('characteristicvaluechanged', this.handleV3Notification);
 
+      await this.performConnectHandshake(context);
+
       try {
         const batteryService = await context.server.getPrimaryService(V3_BATTERY_SERVICE);
         this.batteryChar = await batteryService.getCharacteristic(V3_BATTERY_CHAR);
@@ -55,6 +63,42 @@ export class CoyoteV3ProtocolAdapter extends BaseCoyoteProtocolAdapter {
     } catch (error) {
       await this.resetConnectionState({ emit: false });
       throw error;
+    }
+  }
+
+  /**
+   * Newer firmware (flashed via the official app) ignores B0/BF control
+   * writes until it has seen the same connect-time sequence the app always
+   * sends: an init packet on the write characteristic, best-effort
+   * subscription to two legacy/OTA notify channels, and an MTU bump to 140.
+   * The legacy/OTA channels and MTU negotiation are optional — older
+   * firmware and Web Bluetooth (which has no MTU control API) simply don't
+   * have them, so those steps are non-fatal.
+   */
+  private async performConnectHandshake(context: WebBluetoothConnectionContext): Promise<void> {
+    if (!this.writeChar) return;
+    await this.writeCharacteristicValue(this.writeChar, V3_INIT_PACKET);
+
+    try {
+      const legacyService = await context.server.getPrimaryService(V3_LEGACY_SERVICE);
+      const legacyChar = await legacyService.getCharacteristic(V3_LEGACY_NOTIFY_CHAR);
+      await legacyChar.startNotifications();
+    } catch {
+      // Not present on this firmware/hardware — non-fatal.
+    }
+
+    try {
+      const otaService = await context.server.getPrimaryService(V3_NORDIC_OTA_SERVICE);
+      const otaChar = await otaService.getCharacteristic(V3_NORDIC_OTA_CHAR);
+      await otaChar.startNotifications();
+    } catch {
+      // Only present on OTA-capable firmware — non-fatal.
+    }
+
+    try {
+      await context.server.requestMTU?.(V3_HANDSHAKE_MTU);
+    } catch {
+      // Transport may not support MTU negotiation — non-fatal.
     }
   }
 
